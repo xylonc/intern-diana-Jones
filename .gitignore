@@ -1,0 +1,8 @@
+.env
+*.db
+__pycache__/
+.venv/
+
+# Local AI-assistant config / project instructions (not for the public repo)
+CLAUDE.md
+.claude/
