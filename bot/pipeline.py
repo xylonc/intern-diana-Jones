@@ -1,4 +1,4 @@
-from bot.db import init_db , get_connection
+from bot.db import init_db , get_connection , get_meta , set_meta
 from bot.sources.greenhouse import  GreenhouseSource
 from bot.config import GREENHOUSE_BOARDS, KEYWORDS
 from bot.scoring import matches
@@ -14,6 +14,32 @@ def run():
     #greenhouse.py
     greenhousesource = GreenhouseSource(GREENHOUSE_BOARDS)
     jobs = greenhousesource.fetch()
+
+    #keyword check 
+    current = ",".join(sorted(set(KEYWORDS)))
+    kw = get_meta(connection,"keyword")
+    if kw and kw != current:
+        rescanned = connection.execute(
+            """
+            SELECT id, source, external_id, title FROM jobs WHERE status = 'skipped'
+            """
+        ).fetchall()
+        for rescan in rescanned:
+            temp = Job(source=rescan["source"],external_id=rescan["external_id"],title=rescan["title"])
+            match = matches(temp,KEYWORDS)
+            if match:
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET status = 'scored'
+                    WHERE id = ?
+                    """
+                    ,
+                    (rescan["id"],),
+                )
+        connection.commit()
+    set_meta(connection,"keyword",current)
+    
     for j in jobs:
         connection.execute(
             "INSERT OR IGNORE INTO jobs(source, external_id, title, company, url, location) VALUES(?, ?, ?, ?, ?, ?)",
@@ -52,29 +78,41 @@ def run():
             )
     connection.commit()
 
-    #notify
+    # notify (digest: batch jobs into messages under Telegram's ~4096-char limit)
     scored = connection.execute(
-        """
-        SELECT id, title, company , url FROM jobs WHERE status ='scored'
-        """
+        "SELECT id, title, company, url FROM jobs WHERE status = 'scored'"
     ).fetchall()
+
+    MAX_CHARS = 4000          # safety margin under Telegram's ~4096 limit
+    SEP = "\n\n"              # blank line between jobs in a message
+
+    # Phase 1: group scored jobs into chunks that each fit under MAX_CHARS.
+    # Each chunk is a list of (id, blurb) pairs.
+    chunks = [] #each chunk is one big message
+    current = [] #staging area
+    current_len = 0
     for x in scored:
-        text = (
-              f"🔔 New job match\n\n"
-              f"{x['title']}\n"
-              f"🏢 {x['company']}\n"
-              f"🔗 {x['url']}"
-          )
-        send_message(text)
-        connection.execute(
-            """
-            UPDATE jobs 
-            SET status = 'notified'
-            WHERE id = ?
-            """
-            ,
-            (x['id'],),
-        )
+        blurb = f"🔔 {x['title']}\n🏢 {x['company']}\n🔗 {x['url']}"
+        #when current is not empty, and the total length exceeds we add this chunk and clear 
+        #the staging area
+        if current and current_len + len(blurb) + len(SEP) > MAX_CHARS:
+            chunks.append(current)
+            current = [] #reset staging area
+            current_len = 0 #reset length counter
+        current.append((x["id"], blurb))
+        current_len += len(blurb) + len(SEP)
+    if current:
+        chunks.append(current)
+
+    # Phase 2: send each chunk, then mark THAT chunk's jobs notified (per-chunk commit).
+    for chunk in chunks:
+        message = SEP.join(blurb for (job_id, blurb) in chunk)
+        send_message(message)
+        for (job_id, blurb) in chunk:
+            connection.execute(
+                "UPDATE jobs SET status = 'notified' WHERE id = ?",
+                (job_id,),
+            )
         connection.commit()
 
 #seeding
