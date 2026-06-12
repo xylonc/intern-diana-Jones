@@ -5,6 +5,7 @@ from bot.scoring import matches
 from bot.sources.base import Job
 from bot.telegram import send_message
 
+
 def run():
     # Database 
     init_db()
@@ -76,3 +77,15 @@ def run():
         )
         connection.commit()
 
+#seeding
+def seed():
+    init_db()
+    connection = get_connection()
+    greenhousesource = GreenhouseSource(GREENHOUSE_BOARDS)
+    seen = greenhousesource.fetch()
+    for j in seen:
+        connection.execute(
+            "INSERT OR IGNORE INTO jobs(source, external_id, title, company, url, location,status) VALUES(?, ?, ?, ?, ?, ?, ?)",
+            (j.source, j.external_id, j.title, j.company, j.url, j.location,"seen")
+        ) 
+    connection.commit()

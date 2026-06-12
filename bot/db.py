@@ -29,7 +29,7 @@ def init_db() -> None:
             url         TEXT,
             location    TEXT,
             fetched_at  TEXT NOT NULL DEFAULT (datetime('now')),
-            status TEXT NOT NULL DEFAULT('new') CHECK(status IN ('new','scored','notified','skipped')),
+            status TEXT NOT NULL DEFAULT('new') CHECK(status IN ('new','scored','notified','skipped','seen')),
             UNIQUE(source, external_id)     
         )
         """
