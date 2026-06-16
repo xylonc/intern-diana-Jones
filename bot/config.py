@@ -26,5 +26,7 @@ def _list(name: str) -> list[str]:
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GREENHOUSE_BOARDS = _list("GREENHOUSE_BOARDS")
+LEVER_COMPANIES = _list("LEVER_COMPANIES")
+ASHBY_BOARDS = _list("ASHBY_BOARDS")
 KEYWORDS = [k.lower() for k in _list("KEYWORDS")]
 DB_PATH = os.getenv("DB_PATH", "jobs.db")

@@ -12,6 +12,7 @@ def get_connection() -> sqlite3.Connection:
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON") # enforices FKs + on delete cascade 
     return conn
 
 def init_db() -> None:
@@ -38,6 +39,25 @@ def init_db() -> None:
             fetched_at  TEXT NOT NULL DEFAULT (datetime('now')),
             status TEXT NOT NULL DEFAULT('new') CHECK(status IN ('new','scored','notified','skipped','seen')),
             UNIQUE(source, external_id)     
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tele_chat_id TEXT NOT NULL UNIQUE,
+            keywords TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+            sent_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, job_id)
         )
         """
     )
