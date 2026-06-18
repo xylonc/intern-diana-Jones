@@ -1,0 +1,6 @@
+nium
+aspire
+codapayments
+spotify
+plaid
+netlify
