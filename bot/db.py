@@ -10,13 +10,14 @@ def get_connection() -> sqlite3.Connection:
     instead of by numeric position (row[3]) -- more readable and robust to
     column-order changes.
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH,timeout=5)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON") # enforices FKs + on delete cascade 
     return conn
 
 def init_db() -> None:
-    conn = get_connection()
+    conn = get_connection(
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS meta(

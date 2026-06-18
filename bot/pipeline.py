@@ -63,16 +63,20 @@ def _process_registrations(connection) -> None:
     set_meta(connection, "tg_offset", str(offset))
     connection.commit()
 
-
-def run():
+def register():
     init_db()
     connection = get_connection()
-
     try:
         _process_registrations(connection)   # pick up new /start, /keyword messages
     except Exception as e:
         print(f"[register] skipped: {type(e).__name__}: {e}")
+    finally:
+        connection.close()
 
+
+def run():
+    init_db()
+    connection = get_connection()
     jobs = _fetch_all()
     for j in jobs:
         connection.execute(
@@ -88,60 +92,69 @@ def run():
     ).fetchall()
 
     for user in users:
-        # this user's keywords are stored as a comma-string -> clean lowercase list
-        user_keywords = [k.strip().lower() for k in user["keywords"].split(",") if k.strip()]
-        candidates = connection.execute(
-            """
-            SELECT id, source, external_id, title, company, description, url
-            FROM jobs
-            WHERE status = 'new'
-              AND id NOT IN (SELECT job_id FROM notifications WHERE user_id = ?)
-            """,
-            (user["id"],),
-        ).fetchall()
+        # Isolate each user: a failure here (e.g. send_message raising because this
+        # user blocked the bot) must not starve the users after them in the list.
+        try:
+            # this user's keywords are stored as a comma-string -> clean lowercase list
+            user_keywords = [k.strip().lower() for k in user["keywords"].split(",") if k.strip()]
+            candidates = connection.execute(
+                """
+                SELECT id, source, external_id, title, company, description, url
+                FROM jobs
+                WHERE status = 'new'
+                  AND id NOT IN (SELECT job_id FROM notifications WHERE user_id = ?)
+                """,
+                (user["id"],),
+            ).fetchall()
 
-        matched = []
-        for row in candidates:
-            job = Job(source=row["source"], external_id=row["external_id"], title=row["title"], description=row["description"])
-            if matches(job, user_keywords):
-                matched.append(row)
-        if not matched:
-            continue  
-        
-        #we add new information into staging, once staging is filled we send into chunks
-        #chunks is what we send the user, staging is then cleared and used to psuh information in
-        #until limit again then pushed as a new chunk
-        chunks = []
-        staging = []
-        staging_len = 0
-        for row in matched:
-            snippet = (row["description"] or "").strip().replace("\n", " ").replace("\r", " ")
-            if len(snippet) > 200:
-                snippet = snippet[:200].rstrip() + "…"
-            blurb = f"🔔 {row['title']}\n🏢 {row['company']}\n🔗 {row['url']}"
-            if snippet:
-                blurb += f"\n📝 {snippet}"
-            if staging and staging_len + len(blurb) + len(SEP) > MAX_CHARS:
+            matched = []
+            for row in candidates:
+                job = Job(source=row["source"], external_id=row["external_id"], title=row["title"], description=row["description"])
+                if matches(job, user_keywords):
+                    matched.append(row)
+            if not matched:
+                continue
+
+            #we add new information into staging, once staging is filled we send into chunks
+            #chunks is what we send the user, staging is then cleared and used to psuh information in
+            #until limit again then pushed as a new chunk
+            chunks = []
+            staging = []
+            staging_len = 0
+            for row in matched:
+                snippet = (row["description"] or "").strip().replace("\n", " ").replace("\r", " ")
+                if len(snippet) > 200:
+                    snippet = snippet[:200].rstrip() + "…"
+                blurb = f"🔔 {row['title']}\n🏢 {row['company']}\n🔗 {row['url']}"
+                if snippet:
+                    blurb += f"\n📝 {snippet}"
+                if staging and staging_len + len(blurb) + len(SEP) > MAX_CHARS:
+                    chunks.append(staging)
+                    staging = []
+                    staging_len = 0
+                staging.append((row["id"], blurb))
+                staging_len += len(blurb) + len(SEP)
+            #this staging is to push any last bits not hit to the maximum
+            if staging:
                 chunks.append(staging)
-                staging = []
-                staging_len = 0
-            staging.append((row["id"], blurb))
-            staging_len += len(blurb) + len(SEP)
-        #this staging is to push any last bits not hit to the maximum 
-        if staging:
-            chunks.append(staging)
 
-        # send each chunk to THIS user, THEN log each job in notifications (send-then-log).
-        # Commit per chunk so a crash re-sends at most the in-flight chunk.
-        for chunk in chunks:
-            message = SEP.join(blurb for (job_id, blurb) in chunk)
-            send_message(message, user["tele_chat_id"])
-            for (job_id, blurb) in chunk:
-                connection.execute(
-                    "INSERT OR IGNORE INTO notifications(user_id, job_id) VALUES(?, ?)",
-                    (user["id"], job_id),
-                )
-            connection.commit()
+            # send each chunk to THIS user, THEN log each job in notifications (send-then-log).
+            # Commit per chunk so a crash re-sends at most the in-flight chunk.
+            for chunk in chunks:
+                message = SEP.join(blurb for (job_id, blurb) in chunk)
+                send_message(message, user["tele_chat_id"])
+                for (job_id, blurb) in chunk:
+                    connection.execute(
+                        "INSERT OR IGNORE INTO notifications(user_id, job_id) VALUES(?, ?)",
+                        (user["id"], job_id),
+                    )
+                connection.commit()
+        except Exception as e:
+            # roll back any half-built transaction so the next user starts clean;
+            # the unsent jobs stay out of `notifications`, so they retry next run.
+            connection.rollback()
+            print(f"[notify] user {user['id']} failed: {type(e).__name__}: {e}")
+            continue
 
     connection.close()
 
