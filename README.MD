@@ -50,6 +50,49 @@ is a config change, not a code change.
 
 ---
 
+## Watched companies
+
+The bot currently watches these boards (verified to resolve as of June 2026).
+Coverage is intentionally broad — fintech, dev-tools/infra, AI, and general
+SWE — so it's useful across different tracks, not just one.
+
+**Greenhouse:** stripe, adyen, thunes, databricks, datadog, cloudflare, twilio,
+gitlab, dropbox, asana, robinhood, coinbase, brex, gusto
+
+**Lever:** nium, spotify, plaid
+
+**Ashby:** airwallex, mercury, linear, notion, vercel, ramp, runway, replit,
+supabase, posthog
+
+### Two things to know about coverage
+
+**1. Empty digests in mid-year are normal — it's the hiring calendar, not a bug.**
+Summer internship cycles for tech open roughly **July–October**, with rolling
+admissions (roles get filled as applications arrive, so the first applicants win).
+If you run the bot in, say, May–June, most boards will legitimately have zero open
+intern roles — the previous cycle has closed and the next hasn't opened. The bot's
+value is catching roles *the moment they post* once the cycle opens. Don't judge
+it by an off-season run.
+
+**2. This bot only sees Greenhouse / Lever / Ashby boards.** Many of the biggest
+Singapore intern hirers — Grab, Sea/Shopee, ByteDance/TikTok, GovTech, Singtel/NCS,
+HTX, and the local banks — run their own portals or Workday/SmartRecruiters, which
+this bot **cannot read**. For those, apply directly on the company's careers page.
+Treat this bot as covering one useful slice of the market, not all of it.
+
+### Adding more companies
+
+Boards are just entries in three env vars (`GREENHOUSE_BOARDS`, `LEVER_COMPANIES`,
+`ASHBY_BOARDS`) — no code change. Before adding a slug, verify it with
+`verify_boards.py` (see that script's header), which reuses the bot's own source
+classes to report whether a slug resolves and currently has Singapore roles. A
+board that resolves but has no SG role *right now* is still worth adding — the
+location filter will surface a SG role automatically the moment one is posted.
+
+After adding boards, **re-run `python main.py seed`** before the next pipeline
+pass, or the new boards' existing backlog will be alerted to every subscriber.
+
+
 ## Database
 
 Three tables (plus a small `meta` key/value table for the Telegram poll cursor):
