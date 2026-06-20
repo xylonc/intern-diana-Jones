@@ -98,8 +98,12 @@ pass, or the new boards' existing backlog will be alerted to every subscriber.
 Three tables (plus a small `meta` key/value table for the Telegram poll cursor):
 
 - **`jobs`** — the catalogue of seen postings. `UNIQUE(source, external_id)` is
-  the dedup key. A `status` column (`new` / `scored` / `notified` / `skipped` /
-  `seen`) tracks lifecycle.
+  the dedup key. A `status` column gates the pipeline: rows default to `new`, or
+  are written as `seen` for the pre-existing backlog recorded by `seed` — only
+  `new` rows are considered for alerts. Per-user "already sent?" state lives in
+  the `notifications` table (an anti-join), not here. (`scored` / `notified` /
+  `skipped` are permitted by the column's CHECK constraint but reserved for
+  future use — the current pipeline never sets them.)
 - **`users`** — one row per subscriber: their Telegram `chat_id` and their
   comma-separated keywords.
 - **`notifications`** — a join table between users and jobs with a composite

@@ -1,3 +1,5 @@
+import time
+
 from bot.db import init_db, get_connection, get_meta, set_meta
 from bot.sources.greenhouse import GreenhouseSource
 from bot.sources.lever import LeverSource
@@ -10,6 +12,12 @@ from bot.telegram import send_message, get_updates
 MAX_CHARS = 4000          # safety margin under Telegram's ~4096-char message limit
 SEP = "\n\n"              # blank line between jobs in a digest
 LOCATION_KEYWORD = "singapore"   # global: keep only roles whose location contains this
+
+MAX_KEYWORDS = 20         # cap on how many comma-separated keywords a user may register
+MAX_KEYWORDS_LEN = 200    # cap on total characters in the stored keyword list
+
+RATE_LIMIT = 5            # max /keyword messages accepted per chat, per window
+RATE_WINDOW = 60          # rate-limit window length, in seconds
 
 
 def _fetch_all() -> list[Job]:
@@ -33,6 +41,28 @@ HELP_TEXT = (
     "Send it again any time to update them."
 )
 
+def _over_rate_limit(connection, chat_id) -> bool:
+    now = int(time.time())
+    key = f"rl:{chat_id}"
+    stored = get_meta(connection, key)
+    if stored is None:
+        window_start, count = now, 0
+    else:
+        window_start, count = (int(x) for x in stored.split(":"))
+        if now - window_start >= RATE_WINDOW:   # window expired -> open a fresh one
+            window_start, count = now, 0
+
+    count += 1
+    set_meta(connection, key, f"{window_start}:{count}")
+
+    if count == RATE_LIMIT + 1:                 
+        send_message(
+            f"⏳ Too many keyword updates — I accept at most {RATE_LIMIT} a minute. "
+            "Please try again shortly.",
+            chat_id,
+        )
+    return count > RATE_LIMIT
+
 
 def _process_registrations(connection) -> None:
     """Self-registration via the bot. /start replies with help; /keyword <list>
@@ -50,16 +80,37 @@ def _process_registrations(connection) -> None:
         if text.startswith("/start"):
             send_message(HELP_TEXT, chat_id)
         elif text.startswith("/keyword"):
+            if _over_rate_limit(connection, chat_id):
+                continue
             kw = text[len("/keyword"):].strip()
-            if not kw:
-                send_message("Usage: /keyword intern, backend, python", chat_id)
+            # Normalize the same way the matcher will: split on commas, drop blanks.
+            # This is also our "empty-after-strip" guard -- "/keyword  , ,," -> [].
+            parts = [k.strip() for k in kw.split(",") if k.strip()]
+            cleaned = ", ".join(parts)
+            if not parts:
+                send_message(
+                    "I didn't catch any keywords. Usage: /keyword intern, backend, python",
+                    chat_id,
+                )
+            elif len(parts) > MAX_KEYWORDS:
+                send_message(
+                    f"That's {len(parts)} keywords, but the limit is {MAX_KEYWORDS}. "
+                    "Please send a shorter list.",
+                    chat_id,
+                )
+            elif len(cleaned) > MAX_KEYWORDS_LEN:
+                send_message(
+                    f"Your keyword list is too long ({len(cleaned)} characters); "
+                    f"the limit is {MAX_KEYWORDS_LEN}. Please shorten it.",
+                    chat_id,
+                )
             else:
                 connection.execute(
                     "INSERT INTO users(tele_chat_id, keywords) VALUES(?, ?) "
                     "ON CONFLICT(tele_chat_id) DO UPDATE SET keywords = excluded.keywords",
-                    (chat_id, kw),
+                    (chat_id, cleaned),
                 )
-                send_message(f"✅ Registered! You'll get alerts for: {kw}", chat_id)
+                send_message(f"✅ Registered! You'll get alerts for: {cleaned}", chat_id)
     set_meta(connection, "tg_offset", str(offset))
     connection.commit()
 
